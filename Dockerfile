@@ -1,22 +1,18 @@
 # STEP 1 build ui
-FROM --platform=$BUILDPLATFORM node:24-alpine AS node
+FROM --platform=$BUILDPLATFORM node:22-alpine AS node
 
-RUN apk update && apk add --no-cache make
+RUN apk update && apk add --no-cache make git
 
 WORKDIR /build
 
+RUN git clone https://github.com/bacopilot/cvee.git /build
+RUN git fetch --tags
+RUN git checkout 0.305.1
+
 # install node tools
-COPY package*.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci
+RUN npm ci
 
 # build ui
-COPY Makefile .
-COPY *.js ./
-COPY *.ts *.mts ./
-COPY .browserslistrc .
-COPY assets assets
-COPY i18n i18n
-
 RUN make ui
 
 
@@ -33,26 +29,19 @@ ARG RELEASE=0
 
 WORKDIR /build
 
-# Setup Go cache
-ENV GOCACHE=/root/.cache/go-build
-ENV GOMODCACHE=/root/.cache/go-mod
+RUN git clone https://github.com/bacopilot/ccve.git /build
+RUN git fetch --tags
+RUN git checkout 0.305.2
 
-# download modules
-COPY go.mod .
-COPY go.sum .
-RUN --mount=type=cache,target=${GOMODCACHE} go mod download
+# Copy modified auth.go to fix sponsorship
+# COPY auth.go util/sponsor/auth.go
 
-# install tools
-COPY Makefile .
-COPY cmd/decorate/ cmd/decorate/
-COPY cmd/openapi/ cmd/openapi/
-COPY api/ api/
-RUN --mount=type=cache,target=${GOMODCACHE} make install
+RUN go mod download
 
-# prepare
-COPY . .
+RUN make install
+
 RUN make patch-asn1
-RUN --mount=type=cache,target=${GOMODCACHE} make assets
+RUN make assets
 
 # copy ui
 COPY --from=node /build/dist /build/dist
@@ -63,12 +52,13 @@ ARG TARGETARCH
 ARG TARGETVARIANT
 ARG GOARM=${TARGETVARIANT#v}
 
-RUN --mount=type=cache,target=${GOCACHE} --mount=type=cache,target=${GOMODCACHE} \
-    RELEASE=${RELEASE} GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${GOARM} make build
+
+
+RUN RELEASE=${RELEASE} GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${GOARM} make build
 
 
 # STEP 3 build a small image including module support
-FROM alpine:3.22
+FROM alpine:3.20
 
 WORKDIR /app
 
@@ -79,31 +69,24 @@ COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /build/evcc /usr/local/bin/evcc
 
-COPY packaging/docker/bin/* /app/
+RUN apk update && apk add --no-cache bash
 
 # mDNS
-EXPOSE 5353/udp
+#EXPOSE 5353/udp
 # EEBus
-EXPOSE 4712/tcp
-# mDNS
-EXPOSE 5353/udp
+#EXPOSE 4712/tcp
 # UI and /api
 EXPOSE 7070/tcp
 # KEBA charger
-EXPOSE 7090/udp
+#EXPOSE 7090/udp
 # OCPP charger
 EXPOSE 8887/tcp
 # Modbus UDP
 EXPOSE 8899/udp
 # SMA Energy Manager
-EXPOSE 9522/udp
+#EXPOSE 9522/udp
 
-HEALTHCHECK \
-  --interval=30s \
-  --timeout=5s \
-  --start-period=30s \
-  --retries=3 \
-  CMD wget -qO /dev/null http://localhost:7070 || exit 1
+#HEALTHCHECK --interval=60s --start-period=60s --timeout=30s --retries=3 CMD [ "evcc", "health" ]
 
-ENTRYPOINT [ "/app/entrypoint.sh" ]
+#ENTRYPOINT [ "/app/entrypoint.sh" ]
 CMD [ "evcc" ]
