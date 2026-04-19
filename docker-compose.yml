@@ -1,0 +1,10 @@
+services:
+  evcc:
+    build:
+      context: .
+      network: host
+    network_mode: "host"
+    container_name: evcc-diy
+    volumes:
+      - ./evcc.yaml:/etc/evcc.yaml
+      - ./.evcc:/root/.evcc
